@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"github.com/gin-gonic/gin"
 	//"errors"
+	"strconv"
 )
 
 type Task struct {
@@ -89,12 +90,14 @@ var tasks = []Task{
 }
 
 func getTasks(c* gin.Context) {
+	// return tasks as JSON
 	c.IndentedJSON(http.StatusOK, tasks)
 }
 
 func createTask(c* gin.Context) {
 	var newTask Task
 
+	// bind the JSON payload to a new task and then append it
 	if err := c.BindJSON(&newTask); err != nil {
 		return
 	}
@@ -103,11 +106,54 @@ func createTask(c* gin.Context) {
 	c.IndentedJSON(http.StatusCreated, newTask)
 }
 
+func updateTask(c *gin.Context) {
+	id := c.Param("id")
+	taskID := parseID(id)
+	if taskID == -1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		return
+	}
+
+	var updatedTask Task
+	if err := c.ShouldBindJSON(&updatedTask); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	tasks[taskID-1].Title = updatedTask.Title
+	tasks[taskID-1].Description = updatedTask.Description
+	tasks[taskID-1].Complete = updatedTask.Complete
+	c.Status(http.StatusOK)
+}
+
+func deleteTask(c *gin.Context) {
+	id := c.Param("id")
+	taskID := parseID(id)
+	if taskID == -1 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid task ID"})
+		return
+	}
+
+	tasks = append(tasks[:taskID-1], tasks[taskID:]...)
+	c.Status(http.StatusOK)
+}
+
+func parseID(id string) int {
+	taskID, err := strconv.Atoi(id)
+	if err != nil || taskID <= 0 || taskID > len(tasks) {
+		return -1
+	}
+	return taskID
+}
+
 func main() {
 	router := gin.Default()
 
 	router.GET("/tasks", getTasks)
 	router.POST("/tasks", createTask)
+	router.PUT("/tasks/:id", updateTask)
+	router.DELETE("/tasks/:id", deleteTask)
+
 	router.Run("localhost:8080")
 
 }
