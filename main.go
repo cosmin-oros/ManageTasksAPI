@@ -6,7 +6,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"log"
+	"os"
 	"strconv"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -94,22 +97,56 @@ var tasks = []Task{
 	},
 }
 
+type MySQLConfig struct {
+	User     string `json:"user"`
+	Password string `json:"password"`
+	Database string `json:"database"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
+}
+
 var db *sql.DB
 
 func getTasks(c *gin.Context) {
-	// return tasks as JSON
+	rows, err := db.Query("SELECT * FROM tasks")
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tasks"})
+		return
+	}
+	defer rows.Close()
+
+	tasks := make([]Task, 0)
+	for rows.Next() {
+		var task Task
+		err := rows.Scan(&task.ID, &task.Title, &task.Description, &task.Complete)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch tasks"})
+			return
+		}
+		tasks = append(tasks, task)
+	}
+
 	c.IndentedJSON(http.StatusOK, tasks)
 }
 
 func createTask(c *gin.Context) {
 	var newTask Task
 
-	// bind the JSON payload to a new task and then append it
 	if err := c.BindJSON(&newTask); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	tasks = append(tasks, newTask)
+	result, err := db.Exec("INSERT INTO tasks (title, description, complete) VALUES (?, ?, ?)",
+		newTask.Title, newTask.Description, newTask.Complete)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create task"})
+		return
+	}
+
+	taskID, _ := result.LastInsertId()
+	newTask.ID = int(taskID)
+
 	c.IndentedJSON(http.StatusCreated, newTask)
 }
 
@@ -127,9 +164,13 @@ func updateTask(c *gin.Context) {
 		return
 	}
 
-	tasks[taskID-1].Title = updatedTask.Title
-	tasks[taskID-1].Description = updatedTask.Description
-	tasks[taskID-1].Complete = updatedTask.Complete
+	_, err := db.Exec("UPDATE tasks SET title=?, description=?, complete=? WHERE id=?",
+		updatedTask.Title, updatedTask.Description, updatedTask.Complete, taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update task"})
+		return
+	}
+
 	c.Status(http.StatusOK)
 }
 
@@ -141,25 +182,51 @@ func deleteTask(c *gin.Context) {
 		return
 	}
 
-	tasks = append(tasks[:taskID-1], tasks[taskID:]...)
+	_, err := db.Exec("DELETE FROM tasks WHERE id=?", taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete task"})
+		return
+	}
+
 	c.Status(http.StatusOK)
 }
 
 func parseID(id string) int {
 	taskID, err := strconv.Atoi(id)
-	if err != nil || taskID <= 0 || taskID > len(tasks) {
+	if err != nil || taskID <= 0 {
 		return -1
 	}
 	return taskID
 }
 
+func loadMySQLConfig() (*MySQLConfig, error) {
+	file, err := os.Open(".secrets")
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	var config MySQLConfig
+	err = json.NewDecoder(file).Decode(&config)
+	if err != nil {
+		return nil, err
+	}
+
+	return &config, nil
+}
+
 func main() {
 	router := gin.Default()
-	var err error
-	// replace user, password, database name with credentials
-	db, err = sql.Open("mysql", "user:password@tcp(localhost:3306)/database_name")
+
+	config, err := loadMySQLConfig()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Failed to load MySQL config: ", err)
+	}
+
+	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s", config.User, config.Password, config.Host, config.Port, config.Database)
+	db, err = sql.Open("mysql", dsn)
+	if err != nil {
+		log.Fatal("Failed to connect to MySQL: ", err)
 	}
 	defer db.Close()
 
