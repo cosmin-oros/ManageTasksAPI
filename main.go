@@ -2,16 +2,21 @@ package main
 
 import (
 	"net/http"
+
 	"github.com/gin-gonic/gin"
-	//"errors"
+
+	"database/sql"
+	"log"
 	"strconv"
+
+	_ "github.com/go-sql-driver/mysql"
 )
 
 type Task struct {
-	ID       	int     `json:"id"`
-	Title    	string  `json:"title"`
-	Description string  `json:"description"`
-	Complete 	bool    `json:"complete"`
+	ID          int    `json:"id"`
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Complete    bool   `json:"complete"`
 }
 
 var tasks = []Task{
@@ -89,12 +94,14 @@ var tasks = []Task{
 	},
 }
 
-func getTasks(c* gin.Context) {
+var db *sql.DB
+
+func getTasks(c *gin.Context) {
 	// return tasks as JSON
 	c.IndentedJSON(http.StatusOK, tasks)
 }
 
-func createTask(c* gin.Context) {
+func createTask(c *gin.Context) {
 	var newTask Task
 
 	// bind the JSON payload to a new task and then append it
@@ -148,6 +155,13 @@ func parseID(id string) int {
 
 func main() {
 	router := gin.Default()
+	var err error
+	// replace user, password, database name with credentials
+	db, err = sql.Open("mysql", "user:password@tcp(localhost:3306)/database_name")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
 
 	router.GET("/tasks", getTasks)
 	router.POST("/tasks", createTask)
